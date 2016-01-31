@@ -1,0 +1,258 @@
+---
+title: "Excercise Quality Classification using Fitness Device Data"
+author: "Author: M. Li"
+date: "January 30, 2016"
+output: html_document
+---
+
+
+#### Goal 
+
+The goal of this project is to use the existing exercise data collected from various devices that measure body movements, to predict the manner in which the subjects did the exercise. We will build some classification Tree models use a training dataset, then validate on a seperate validation dataset, then pick the best performed model to predict the 20 test cases given. 
+
+#### Data Source: 
+
+* The training data for this project are available here:
+  + https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+* The test data are available here:
+  + https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+*The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+
+
+#### Data Pre-Processing the "pml-training" dataset:
+* Dimension reduction: eliminate varialbes that have high NA values and variables have low variance. This reduced the number of variables from 159 to 58. 
+
+* Seperate the "pml-training" dataset into "training_set" and "validation_set" with 70/30 portion.
+
+* In addition, exclude the variables including "X","user_name" ,"raw_timestamp_part_1","raw_timestamp_part_2"  "cvtd_timestamp", which don't seem to be useful for modeling purposes.
+
+* Perform some exploratory data analysis (not necessarily to be resported)
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(knitr)
+
+training_data <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+write.csv(training_data, file="pml-training.csv")
+# str(training_data)
+testing_data <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+write.csv(testing_data, file="pml-testing.csv")
+
+# some functions to reduce the feature space
+findHighNAVariables <- function (dataframe, threshold=0.5) {
+  unUsableIndices <- c()
+  ttlLength <- length(dataframe[,1])
+  for (i in 1:length(dataframe)) {
+    if (length(which(is.na(dataframe[,i])))/ttlLength > threshold)
+      unUsableIndices <- c(unUsableIndices, i)
+  }
+  return(names(dataframe)[unUsableIndices])
+}
+
+
+findLowVarianceVariables <- function (dataframe) {
+  if("caret" %in% rownames(installed.packages()) == FALSE){
+    install.packages("caret")
+  } 
+  library(caret)
+  nzv = caret::nearZeroVar(dataframe, saveMetrics = FALSE)
+  sprintf("The near zero variance predictor: %s", names(dataframe)[nzv])
+  names(dataframe)[nzv]
+}
+
+
+findHighCorrVariables <- function (df, threshold = 0.75){
+  correlation_matrix <- cor(df)
+  logical_mat_pos <- (correlation_matrix >= threshold) # return a logical 
+  logical_mat_neg <- (correlation_matrix <= -threshold) # return a logical 
+  paired_correlated_pos <- upper.tri(logical_mat_pos)&logical_mat_pos  # this uses the upper triangle matrix
+  a_var <- colnames(paired_correlated_pos)[which(paired_correlated_pos==TRUE)/ncol(paired_correlated_pos)+1]
+  b_var <- rownames(paired_correlated_pos)[which(paired_correlated_pos==TRUE)%%nrow(paired_correlated_pos)]
+  corr_var_pairs_pos <- paste(a_var, b_var, sep=",")
+  paired_correlated_neg <- upper.tri(logical_mat_neg)&logical_mat_neg  # this uses the upper triangle matrix
+  a_var <- colnames(paired_correlated_neg)[which(paired_correlated_neg==TRUE)/ncol(paired_correlated_neg)+1]
+  b_var <- rownames(paired_correlated_neg)[which(paired_correlated_neg==TRUE)%%nrow(paired_correlated_neg)]
+  corr_var_pairs_neg <- paste(a_var, b_var, sep=",")
+  list(corr_var_pairs_pos, corr_var_pairs_neg)
+}
+
+highNA_vars_training <- findHighNAVariables(training_data, threshold = 0.95)
+highNA_vars_testing <- findHighNAVariables(testing_data, threshold = 0.95)
+# intersect(highNA_vars_training, highNA_vars_testing)
+highNA_vars <- union(highNA_vars_training, highNA_vars_testing)
+
+lowVariance_vars_training <- findLowVarianceVariables(training_data)
+lowVariance_vars_testing <- findLowVarianceVariables(testing_data)
+lowVariance_vars <- union(lowVariance_vars_training,lowVariance_vars_testing)
+
+library(dplyr)
+exclude_vars <- union(highNA_vars,lowVariance_vars)
+indExclude <- which(names(training_data) %in% exclude_vars)
+training_data_clean <- select(training_data, -indExclude)
+saveRDS(training_data_clean, "pml-training-clean.RDS")
+
+```
+
+#### Model Building
+This is a classification problem, therefore a Classification Tree is intuitively the solution. We can build simple tree models to start with. Due to the known issue of likely "overfitting" of tree models, we also need to consider Cross Validation for tree model building. Then we will look at the effect of tree Pruning.
+
++ Step 0. Split the provided pml-training data into a training set and a validation set by 70/30. 
+
++ Step 1.a Use the "tree" package, build a simple classification tree with "classe" as outcome, and the rest of the variables as predictors. As a natural "variable selection" process, there are only 13 variables made into the tree split.  summary shown as follows:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# ref: http://ecology.msu.montana.edu/labdsv/R/labs/lab6/lab6.html
+# install.packages("tree")
+library(tree)
+library(caret)
+training_data_clean <- readRDS("pml-training-clean.RDS")
+set.seed(2046)
+trainIndx <- createDataPartition (training_data_clean$classe, p=0.7)[[1]]
+
+training_set <- training_data_clean[-c(1:5)][trainIndx,]
+validation_set <- training_data_clean[-c(1:5)][-trainIndx,]
+tree_model <- tree(classe ~ ., data=training_set)
+# plot(tree_model)
+# text(tree_model)
+summary(tree_model)
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Step 1.b We can use the "rpart" package to build the tree and display using the fancyRpartPlot() function to see if the two trees are the same
+# library(rpart)
+# rpart_model <- rpart(classe ~ ., data=training_set)
+# library(rpart.plot)
+# library(rattle)
+# fancyRpartPlot(rpart_model)
+
+```
+
++ Step 1.b We can use the "caret" package to build a random forest, which usually is the best-performed model 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(caret)
+library(randomForest)
+
+# trCont <- trainControl(method = "cv", number = 2)
+# # knowing the variables that made to the previoius tree model, we can use just these to reduce the complexity
+# # 2-fold cross validation is faster compare to the default 10-fold
+# rf_model2fold <- train(classe ~ roll_belt+pitch_forearm+num_window+roll_forearm+magnet_dumbbell_x
+#                    +magnet_dumbbell_z+accel_dumbbell_y+magnet_dumbbell_y
+#                     +pitch_belt+total_accel_dumbbell+magnet_forearm_x+yaw_belt+accel_forearm_x,
+#                       data=training_set, method="rf", trainControl=trCont)
+# saveRDS(rf_model2fold, "pml-RF-model.RDS")
+
+# Calculate the variable importance using the varImp function in the caret package. 
+# What is the order of variable importance?
+rf_model2fold <- readRDS("pml-RF-model.RDS")
+importanceVars <- caret::varImp(rf_model2fold)
+
+# par(mfrow=c(1,2))
+# plot(rf_model2fold$finalModel)
+# plot(rf_model2fold$terms)
+
+# names(training_set)[order(importanceVars$importance, decreasing=TRUE)]
+rf_model2fold$finalModel
+
+```
+
+
++ Step 2. As simple tree model is likely to be overfitting, we perform a 10-fold Cross validation on this tree model. The plot of the cross-validated tree model shows deviance at each number of terminal node size (i.e. number of leaf nodes of the tree). 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+cv_tree_model <- cv.tree(tree_model )
+par(mfrow=c(1,1))
+plot(cv_tree_model)
+```
+
++ Step 3. Now we prune the cross-validated tree model, one with 10 leaf nodes and another with the full 23 leaves. As a matter of fact, the 10-leaf node tree is not good enough to differentiate class D from class B and C, therefore no leaf node contains class D. 
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+par(mfrow=c(1,2))
+
+pruned_cv_tree_model_10 <- prune.tree(tree_model,best=10)
+plot(pruned_cv_tree_model_10); text(pruned_cv_tree_model_10); title("10 leaf-node tree")
+
+pruned_cv_tree_model_23 <- prune.tree(tree_model,best=23)
+plot(pruned_cv_tree_model_23); text(pruned_cv_tree_model_23); title("23 leaf-node tree")
+
+```
+
+#### Model Validation
+
+We have the 30% of the original pml-training dataset to be the validation dataset, so we can validate the two pruned trees and the random forest model. 
+
++ Confusion matrix for all three models on the validation set are shown as follows:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+predict_10nodes_Tree <- predict(pruned_cv_tree_model_10, validation_set, type="class")
+kable(table(validation_set$classe, predict_10nodes_Tree), caption="Confusion Matrix (10 node tree model)" )
+predict_23nodes_Tree <- predict(pruned_cv_tree_model_23, validation_set, type="class")
+kable(table(validation_set$classe, predict_23nodes_Tree), caption="Confusion Matrix (23 node tree model)" )
+predict_rf_model2fold <- predict(rf_model2fold, validation_set)
+kable(table(validation_set$classe, predict_rf_model2fold), caption="Confusion Matrix (Random Forest Model)" )
+
+# CM_10nodes_Tree <- data.frame(table(validation_set$classe, predict_10nodes_Tree))
+# CM_23nodes_Tree <- table(validation_set$classe, predict_23nodes_Tree)
+# CM_RF2fold <- table(validation_set$classe, predict_rf_model2fold )
+# 
+# df_all <- cbind(CM_10nodes_Tree,CM_23nodes_Tree, CM_RF2fold)
+# kable(df_all)
+
+```
+
++ Out of Sample Error (Random Forest model performs significantly better)
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+accuracy_10nodes <- sum(predict_10nodes_Tree == validation_set$classe)/length(predict_10nodes_Tree)
+accuracy_23nodes <- sum(predict_23nodes_Tree == validation_set$classe)/length(predict_23nodes_Tree)
+accuracy_rf <- sum(predict_rf_model2fold == validation_set$classe)/length(predict_rf_model2fold)
+
+
+
+# print(paste("accuracy of 10-node tree is ", format(accuracy_10nodes, digit=5), sep=" "))
+# print(paste("accuracy of 23-node tree is ", format(accuracy_23nodes, digit=5), sep=" "))
+# print(paste("accuracy of random forest is ", format(accuracy_rf, digit=5), sep=" "))
+# 
+# print(paste("Out of Sample Error of 10-node tree is ", format((1-accuracy_10nodes)*100, digit=2), "%", sep=" "))
+# print(paste("Out of Sample Error of 23-node tree is ", format((1-accuracy_23nodes)*100, digit=2), "%", sep=" "))
+# print(paste("Out of Sample Error of random forest is ", format((1-accuracy_rf)*100, digit=2), "%", sep=" "))
+
+
+df <- rbind(c(format(accuracy_10nodes, digit=4),format((1-accuracy_10nodes)*100, digit=4)),
+            c(format(accuracy_23nodes, digit=4), format((1-accuracy_23nodes)*100, digit=4)),
+            c(format(accuracy_rf, digit=4), format((1-accuracy_rf)*100, digit=4)))
+
+colnames(df) <- c("Accuracy", "Out of Sample Error (%)")
+rownames(df) <-  c("10Node_Pred", "23Node_Pred", "RandomForest_Pred")
+
+kable(df, digit=2, caption="Model Validation")
+
+```
+
+
+#### Predict the 20 Test cases
+
+With the above model validation, we can see the Random Forest model performs the best. Therefore we use this model to predict the excercise behavior on the given 20 test cases. The prediction are shown as follows:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# predict_10nodes <- predict(pruned_cv_tree_model_10, testing_data, type="class")
+# predict_23nodes <- predict(pruned_cv_tree_model_23, testing_data, type="class")
+predict_rf <- predict(rf_model2fold, testing_data, type="raw")
+
+# df <- rbind(predict_10nodes, predict_23nodes,predict_rf )
+df <- rbind(predict_rf )
+colnames(df) <- testing_data$problem_id
+# rownames(df) <- c("10Node_Pred", "23Node_Pred", "RandomForest")
+rownames(df) <- c("RandomForest")
+kable(df, caption="Prediction by Random Forest model on the 20 test cases")
+```
+
+
