@@ -10,6 +10,8 @@ output: html_document
 
 The goal of this project is to use the existing exercise data collected from various devices that measure body movements, to predict the manner in which the subjects did the exercise. We will build some classification Tree models use a training dataset, then validate on a seperate validation dataset, then pick the best performed model to predict the 20 test cases given. 
 
+More details of the project can be found on github: https://github.com/msdbl0zero/PracticalMachineLearning
+
 #### Data Source: 
 
 * The training data for this project are available here:
@@ -136,7 +138,14 @@ summary(tree_model)
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 library(caret)
 library(randomForest)
+# rf_model <- randomForest(classe ~ roll_belt+pitch_forearm+num_window+roll_forearm+magnet_dumbbell_x
+#                    +magnet_dumbbell_z+accel_dumbbell_y+magnet_dumbbell_y
+#                     +pitch_belt+total_accel_dumbbell+magnet_forearm_x+yaw_belt+accel_forearm_x,
+#                       data=training_set, importance=TRUE, ntree=100 )
+# varImpPlot(rf_model, sort=TRUE, main="", col="blue", bg="red")
+# title(main="Random Forest Variable Importance")
 
+# a different model with controled number of fold for cross validation
 # trCont <- trainControl(method = "cv", number = 2)
 # # knowing the variables that made to the previoius tree model, we can use just these to reduce the complexity
 # # 2-fold cross validation is faster compare to the default 10-fold
@@ -146,16 +155,20 @@ library(randomForest)
 #                       data=training_set, method="rf", trainControl=trCont)
 # saveRDS(rf_model2fold, "pml-RF-model.RDS")
 
+
+
 # Calculate the variable importance using the varImp function in the caret package. 
 # What is the order of variable importance?
 rf_model2fold <- readRDS("pml-RF-model.RDS")
 importanceVars <- caret::varImp(rf_model2fold)
-
 # par(mfrow=c(1,2))
 # plot(rf_model2fold$finalModel)
 # plot(rf_model2fold$terms)
 
-# names(training_set)[order(importanceVars$importance, decreasing=TRUE)]
+ylabs <- names(training_set)[order(importanceVars$importance, decreasing=TRUE)]
+y <- importanceVars$importance$Overall[order(importanceVars$importance, decreasing=TRUE)]
+
+plot(x=1:length(y), y=y); text(x, y, ylabs)
 rf_model2fold$finalModel
 
 ```
